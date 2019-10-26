@@ -5,6 +5,10 @@
  * Created on October 25, 2019, 9:03 PM
  */
 
+/* EEPROM:
+ * ADDRESS: 0                   1
+ * DATA   : HIGH_BYTE_OLD_TEMP  LOW_BYTE_OLD_TEMP
+ */
 
 //Includes
 #include <xc.h>
@@ -21,14 +25,18 @@
 //Define functions
 void timer0_init(void);
 void external_interrupt_init(void);
+void write_eeprom(byte data,byte address[2]); //address[0]=high byte of address,address[1]=low byte of address
+byte read_eeprom(byte address[2]);
 
 //Define variables
 int seconds_passed;
 int set_temp = 0;
-byte int_flag = 0;
+byte temp;
 byte set_temperature[3];
 byte temp_change = 1;
 int old_temp = 0;
+byte eeprom_address[2];
+
 
 //------------------------------------------------------------------------------
 void __interrupt(irq(IRQ_TMR0)) TIMER0_ISR(void){
@@ -96,6 +104,11 @@ void __interrupt(irq(IRQ_INT2)) INT2_ISR(void){
     PIR7bits.INT2IF = 0;
 }
 
+void __interrupt(irq(IRQ_NVM)) EEPROM_ISR(void){
+    NVMCON1bits.WREN = 0; //Disable writes
+    PIR0bits.NVMIF = 0;
+}
+
 void __interrupt(irq(IRQ_I2C1TX)) I2C_TX_ISR(void){
     I2C1TXB = I2C_TX_BUFFER[I2C_TX_COUNTER];
     I2C_TX_COUNTER ++;
@@ -112,7 +125,7 @@ void __interrupt(irq(IRQ_I2C1)) I2C_GENERAL_ISR(void){
     I2C1PIR = 0x00;
 }
 
-void __interrupt(irq(default)) default_isr(void){
+void __interrupt(irq(default)) DEFAULT_ISR(void){
     //Unhandled interrupts go here
     Reset(); //In normal conditions we will never come here
 }
@@ -158,6 +171,13 @@ void main(void) {
     OLED_WriteString(celsious,2,5,112);
     OLED_WriteString(celsious,2,6,112);
     
+    //Get previous temperature
+    eeprom_address[0] = 0x00; //Address high byte
+    eeprom_address[1] = 0x00; //Address low byte
+    set_temp = read_eeprom(eeprom_address) << 8;
+    eeprom_address[1] = 0x01; //Address low byte
+    set_temp = set_temp | read_eeprom(eeprom_address);
+    
     while(1){
         if(temp_change){
             temp_change = 0;
@@ -168,6 +188,15 @@ void main(void) {
             temp = set_temp-(set_temp/100)*100-temp*10;
             set_temperature[2] = temp;
             OLED_WriteNumber(set_temperature,3,5,88);
+            //Write to EEPROM
+            eeprom_address[0] = 0x00; //Address high byte
+            eeprom_address[1] = 0x00; //Address low byte
+            temp = set_temp >> 8; //High temp byte
+            write_eeprom(temp,eeprom_address);
+            temp = set_temp; //Low temp byte
+            eeprom_address[1] = 0x01; //Address low byte
+            write_eeprom(temp,eeprom_address);
+            
             while(!PORTBbits.RB1 || !PORTBbits.RB2); //Wait here to suspend any voltage spikes from encoder
             PIE5bits.INT1IE = 1;
             PIR5bits.INT1IF = 0;
@@ -220,4 +249,40 @@ void external_interrupt_init(void){
     PIE1bits.INT0IE = 1; //Enable interrupt
     PIE5bits.INT1IE = 1; //Enable interrupt
     PIE7bits.INT2IE = 1; //Enable interrupt
+}
+
+void write_eeprom(byte data,byte address[2]){
+    
+    NVMCON1 = 0x00; //Access EEPROM memory locations,set REG bits to 00
+    
+    while(NVMCON1bits.WR); //Wait if we still write
+    PIR0bits.NVMIF = 0; //Clear flag
+    IPR0bits.NVMIP = 1; //High priority
+    
+    NVMADRH = 0x03 & address[0];
+    NVMADRL = address[1];
+    NVMDAT = data;
+    
+    NVMCON1bits.WREN = 1; //Enable writes
+    INTCON0bits.GIE = 0; //Disable interrupts
+    
+    //Required unlock sequence
+    NVMCON2 = 0x55;
+    NVMCON2 = 0xAA;
+   
+    NVMCON1bits.WR = 1; //Set WR bit to begin write  
+    PIE0bits.NVMIE = 1; //Enable NVM interrupt
+    INTCON0bits.GIE = 1; //Enable interrupts
+}
+
+byte read_eeprom(byte address[2]){
+    byte temp;
+    NVMCON1 = 0x00; //Access EEPROM memory locations,set REG bits to 00
+
+    NVMADRH = 0x03 & address[0];
+    NVMADRL = address[1];
+    
+    NVMCON1bits.RD = 1; //Read data
+    temp = NVMDAT;
+    return temp;
 }
