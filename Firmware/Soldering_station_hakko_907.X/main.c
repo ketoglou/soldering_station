@@ -23,28 +23,58 @@ void timer0_init(void);
 void external_interrupt_init(void);
 
 //Define variables
+int seconds_passed;
 int set_temp = 0;
 byte int_flag = 0;
 byte set_temperature[3];
 byte temp_change = 1;
+int old_temp = 0;
 
 //------------------------------------------------------------------------------
 void __interrupt(irq(IRQ_TMR0)) TIMER0_ISR(void){
     TMR0L= 0xDB;
     TMR0H= 0x0B;
+    seconds_passed++;
     LED = !LED;
+    //if 10 minutes passed lower the temperature
+    if(seconds_passed == 600){
+        old_temp = set_temp;
+        set_temp = 180;
+        temp_change = 1;
+    }else if(seconds_passed == 1800){ //if 30 minutes passed zero the temperature
+        set_temp = 0;
+        seconds_passed = 0;
+        T0CON0bits.EN = 0; //Disable timer
+        LED = 0;
+        temp_change = 1;
+    }
     PIR3bits.TMR0IF = 0; //Clear interrupt flag
 }
 
 void __interrupt(irq(IRQ_INT0)) INT0_ISR(void){
+    if(!T0CON0bits.EN){
+        set_temp = old_temp;
+        T0CON0bits.EN = 1;
+        temp_change = 1;
+    }else if(set_temp == 180 && seconds_passed > 600){
+        set_temp = old_temp;
+        temp_change = 1;
+    }
+    seconds_passed = 0;
     PIR1bits.INT0IF = 0;
 }
 
 void __interrupt(irq(IRQ_INT1)) INT1_ISR(void){
     PIE7bits.INT2IE = 0;
     PIR7bits.INT2IF = 0;
+    if((set_temp == 180 && seconds_passed > 600)|| !T0CON0bits.EN){
+        set_temp = old_temp;
+        if(!T0CON0bits.EN)
+            T0CON0bits.EN = 1; //Enable timer
+    }
     if(set_temp < 401)
         set_temp++;
+    seconds_passed = 0;
     temp_change = 1;
     PIE5bits.INT1IE = 0;
     PIR5bits.INT1IF = 0;
@@ -53,8 +83,14 @@ void __interrupt(irq(IRQ_INT1)) INT1_ISR(void){
 void __interrupt(irq(IRQ_INT2)) INT2_ISR(void){
     PIE5bits.INT1IE = 0;
     PIR5bits.INT1IF = 0;
+    if((set_temp == 180 && seconds_passed > 600)|| !T0CON0bits.EN){
+        set_temp = old_temp;
+        if(!T0CON0bits.EN)
+            T0CON0bits.EN = 1; //Enable timer
+    }
     if(set_temp > 0)
         set_temp--;
+    seconds_passed = 0;
     temp_change = 1;
     PIE7bits.INT2IE = 0;
     PIR7bits.INT2IF = 0;
@@ -132,7 +168,7 @@ void main(void) {
             temp = set_temp-(set_temp/100)*100-temp*10;
             set_temperature[2] = temp;
             OLED_WriteNumber(set_temperature,3,5,88);
-            while(!PORTBbits.RB1 || !PORTBbits.RB2);
+            while(!PORTBbits.RB1 || !PORTBbits.RB2); //Wait here to suspend any voltage spikes from encoder
             PIE5bits.INT1IE = 1;
             PIR5bits.INT1IF = 0;
             PIE7bits.INT2IE = 1;
@@ -150,6 +186,7 @@ void timer0_init(void){
     T0CON1 = 0x48;
     TMR0L= 0xDB;
     TMR0H= 0x0B;
+    seconds_passed = 0;
     IPR3bits.TMR0IP = 0; //Low priority interrupt
     PIR3bits.TMR0IF = 0; //Clear interrupt flag
     PIE3bits.TMR0IE = 1; //Enable interrupt
