@@ -3,6 +3,7 @@
 
 void I2C_Init(void){
     //Configure SDA,SCL Pins
+    I2C1CON0bits.EN = 0; //Disable I2C module
     TRISCbits.TRISC3 = 0; //SCL
     TRISCbits.TRISC4 = 0; //SDA
     LATCbits.LATC3 = 0; // Clear PORTC write latches

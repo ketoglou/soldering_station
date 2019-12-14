@@ -1,4 +1,5 @@
 #ifndef INIT_STRINGS_H
+#define INIT_STRINGS_H
 
 CHAR keto_st[12] = { SPACE,K,E,T,O,SPACE,H,A,K,K,O,SPACE };
 byte hakko_num[3] = { 9,0,7 };

@@ -12,6 +12,7 @@
 
 //Includes
 #include <xc.h>
+#include <pic18f27k42.h>
 #include "config.h"
 #include "i2c.h"
 #include "oled_sdd1306.h"
@@ -20,30 +21,49 @@
 // This code is meant to run on a PIC running at 64 MHz.
 #define _XTAL_FREQ 64000000
 #define byte unsigned char
-#define LED LATAbits.LA0
+#define LED_STAT LATAbits.LA0
+#define LED_READY LATAbits.LA1
+#define MOSFET1 LATCbits.LC6
+#define MOSFET2 LATCbits.LC7
 
 //Define functions
 void timer0_init(void);
 void external_interrupt_init(void);
 void write_eeprom(byte data,byte address[2]); //address[0]=high byte of address,address[1]=low byte of address
 byte read_eeprom(byte address[2]);
+void timer2PWM_init(void);
+void ADC_Init(void);
+void ADC_Start(byte pin);
 
 //Define variables
 int seconds_passed;
-int set_temp = 0;
-byte temp;
+//byte max6675_read; //MAX6675 could not be expected to produce more than about 5 reads per second.
+int set_temp = 180;
 byte set_temperature[3];
+byte real_temperature[3];
 byte temp_change = 1;
 int old_temp = 0;
 byte eeprom_address[2];
-
+int real_temp = 0;
+int temporary_val; //temporary value
+float dV,dV_average,Current,Vx,Vx_average,R,Temp;
+byte measure_flag = 0;
+byte timer2_pwm_counter = 0;
+byte pulse_width;
+int adc_result;
+byte adc_flag;
+//byte max6675_counter = 0;
+CHAR detached_str[3] = {PAVLA,PAVLA,PAVLA};
+CHAR loading_str[3] = {COLON,COLON,COLON};
 
 //------------------------------------------------------------------------------
 void __interrupt(irq(IRQ_TMR0)) TIMER0_ISR(void){
     TMR0L= 0xDB;
     TMR0H= 0x0B;
     seconds_passed++;
-    LED = !LED;
+    measure_flag++;
+    //max6675_read =1;
+    LED_STAT = !LED_STAT;
     //if 10 minutes passed lower the temperature
     if(seconds_passed == 600){
         old_temp = set_temp;
@@ -53,10 +73,36 @@ void __interrupt(irq(IRQ_TMR0)) TIMER0_ISR(void){
         set_temp = 0;
         seconds_passed = 0;
         T0CON0bits.EN = 0; //Disable timer
-        LED = 0;
+        LED_STAT = 0;
         temp_change = 1;
     }
     PIR3bits.TMR0IF = 0; //Clear interrupt flag
+}
+
+//Period:0.01sec
+//Interupt:0.0001sec
+void __interrupt(irq(IRQ_TMR2)) TIMER2_ISR(void){
+    timer2_pwm_counter++;
+    if(timer2_pwm_counter >= pulse_width){
+        MOSFET1 = 0;
+        MOSFET2 = 0;
+    }else{
+        MOSFET1 = 1;
+        MOSFET2 = 1;
+    }
+    if(timer2_pwm_counter == 100){
+        timer2_pwm_counter = 0;
+        MOSFET1 = 1;
+        MOSFET2 = 1;
+    }
+    PIR4bits.TMR2IF = 0; //Clear interrupt flag
+}
+
+void __interrupt(irq(IRQ_AD)) ADC_ISR(void){
+    adc_result = ADRESL;
+    adc_result = adc_result | (ADRESH <<8);
+    adc_flag = 1;
+    PIR1bits.ADIF = 0; //Clear interrupt flag
 }
 
 void __interrupt(irq(IRQ_INT0)) INT0_ISR(void){
@@ -80,10 +126,10 @@ void __interrupt(irq(IRQ_INT1)) INT1_ISR(void){
         if(!T0CON0bits.EN)
             T0CON0bits.EN = 1; //Enable timer
     }
-    if(set_temp < 401)
+    if(set_temp < 500)
         set_temp++;
-    seconds_passed = 0;
     temp_change = 1;
+    seconds_passed = 0;
     PIE5bits.INT1IE = 0;
     PIR5bits.INT1IF = 0;
 }
@@ -96,10 +142,10 @@ void __interrupt(irq(IRQ_INT2)) INT2_ISR(void){
         if(!T0CON0bits.EN)
             T0CON0bits.EN = 1; //Enable timer
     }
-    if(set_temp > 0)
-        set_temp--;
-    seconds_passed = 0;
+    if(set_temp > 180)
+        set_temp--; 
     temp_change = 1;
+    seconds_passed = 0;
     PIE7bits.INT2IE = 0;
     PIR7bits.INT2IF = 0;
 }
@@ -132,6 +178,10 @@ void __interrupt(irq(default)) DEFAULT_ISR(void){
 
 //------------------------------------------------------------------------------
 void main(void) {
+    //Oscillator Configuration(We use crystal oscillator)
+    OSCCON1 = 0x20; //ExtOSC with 4xPLL
+    OSCCON2 = 0x20;
+    OSCCON3 = 0x00;
     OSCEN = 0x80;
     while(!OSCSTATbits.EXTOR || !OSCSTATbits.PLLR);
     
@@ -144,16 +194,27 @@ void main(void) {
     //PPS Configuration
     PPSLOCKbits.PPSLOCKED = 0; //PPS selections
     
-    TRISAbits.TRISA0 = 0; //LED
+    ANSELC = 0x00;
+    TRISAbits.TRISA0 = 0; //LED STATUS
+    TRISAbits.TRISA1 = 0; //LED READY
+    TRISCbits.TRISC0 = 1; //Amplifier Input
+    ANSELCbits.ANSELC0 = 1; //Read Analog Amplifier
+    TRISCbits.TRISC1 = 1; //Vx Input
+    ANSELCbits.ANSELC1 = 1; //Read Analog Vx
+    TRISCbits.TRISC6 = 0;
+    TRISCbits.TRISC7 = 0;
     
     INTCON0bits.IPEN = 1; //Enable interrupt priority
     INTCON0bits.GIEH = 1; //Enable high priority interrupts
     INTCON0bits.GIEL = 1; //Enable low priority interrupts
     
     external_interrupt_init();
-    timer0_init();
     I2C_Init();
+    //SPI1_Init();
+    ADC_Init();
     OLED_Init();
+    timer0_init();
+    timer2PWM_init();
     
     PPSLOCKbits.PPSLOCKED = 1; //PPS selections
     
@@ -177,32 +238,129 @@ void main(void) {
     set_temp = read_eeprom(eeprom_address) << 8;
     eeprom_address[1] = 0x01; //Address low byte
     set_temp = set_temp | read_eeprom(eeprom_address);
+    if(set_temp < 180)
+        set_temp = 180;
+    
+    MOSFET1 = 1;
+    MOSFET2 = 1;
     
     while(1){
+        //Calculate encoder (set temperature)
         if(temp_change){
-            temp_change = 0;
-            int temp = set_temp/100;
-            set_temperature[0] = temp;
-            temp = (set_temp-temp*100)/10;
-            set_temperature[1] = temp;
-            temp = set_temp-(set_temp/100)*100-temp*10;
-            set_temperature[2] = temp;
+            temporary_val = set_temp/100;
+            set_temperature[0] = temporary_val;
+            temporary_val = (set_temp-temporary_val*100)/10;
+            set_temperature[1] = temporary_val;
+            temporary_val = set_temp-(set_temp/100)*100-temporary_val*10;
+            set_temperature[2] = temporary_val;
             OLED_WriteNumber(set_temperature,3,5,88);
             //Write to EEPROM
             eeprom_address[0] = 0x00; //Address high byte
             eeprom_address[1] = 0x00; //Address low byte
-            temp = set_temp >> 8; //High temp byte
-            write_eeprom(temp,eeprom_address);
-            temp = set_temp; //Low temp byte
+            temporary_val = set_temp >> 8; //High temp byte
+            write_eeprom(temporary_val,eeprom_address);
+            temporary_val = set_temp; //Low temp byte
             eeprom_address[1] = 0x01; //Address low byte
-            write_eeprom(temp,eeprom_address);
+            write_eeprom(temporary_val,eeprom_address);
             
             while(!PORTBbits.RB1 || !PORTBbits.RB2); //Wait here to suspend any voltage spikes from encoder
-            PIE5bits.INT1IE = 1;
+            
+            temp_change = 0;
             PIR5bits.INT1IF = 0;
-            PIE7bits.INT2IE = 1;
             PIR7bits.INT2IF = 0;
+            PIE5bits.INT1IE = 1;
+            PIE7bits.INT2IE = 1;
         }
+        /*
+         //Thermocouple Hakko 907 soldering iron
+         if(!PIE2bits.SPI1RXIE && max6675_read){
+            if(flag_detached){
+                OLED_WriteString(detached_str,3,6,88);
+                max6675_counter = 0;
+            }else{
+                if(!max6675_counter){
+                    real_temp = 0.5+((float)spi_temperature*0.25);
+                    max6675_counter = 1;
+                }else if(max6675_counter){
+                    real_temp = real_temp + (0.5+((float)spi_temperature*0.25));
+                    real_temp = real_temp/2;
+                    temporary_val = real_temp/100;
+                    real_temperature[0] = temporary_val;
+                    temporary_val = (real_temp-temporary_val*100)/10;
+                    real_temperature[1] = temporary_val;
+                    temporary_val = real_temp-(real_temp/100)*100-temporary_val*10;
+                    real_temperature[2] = temporary_val;
+                    OLED_WriteNumber(real_temperature,3,6,88);
+                    max6675_counter = 0;
+                }
+            }
+            SPI1_Master_RecieveOnly();
+            max6675_read = 0;
+        }*/
+        
+        //Thermistor Hakko 907 soldering iron
+        //Calculate Temperature
+        if(measure_flag == 2){
+            //Measure current 10 times
+            dV_average = 0;
+            for(byte i=0;i<200;i++){
+                while(ADCON0bits.GO);
+                ADC_Start(0x10); //RC0=Amplifier Voltage
+                while(!adc_flag);//Wait if an ADC process is still processing
+                dV = adc_result * 0.00122; //Real voltage real
+                dV = dV/20.0; //Because is amplified by x20 
+                dV_average = dV_average + dV;
+            }
+            dV_average = dV_average/200;
+            Current = dV_average/0.05; //Current across 0.05 Ohm resistance
+            if(Current != 0){
+                Vx_average = 0;
+                for(byte i=0;i<10;i++){
+                    while(ADCON0bits.GO);
+                    ADC_Start(0x11); //RC1=Vx Voltage
+                    while(!adc_flag);//Wait if an ADC process is still processing  
+                    Vx = adc_result * 0.00122; //Real voltage real
+                    Vx_average = Vx_average + Vx;
+                }
+                Vx_average = Vx_average/10;
+                R = Vx_average/Current;
+            }else
+                R = 0;
+            if(R > 48){
+                Temp = 5.95*R - 281.3;
+                real_temp = (int)Temp;
+                temporary_val = real_temp/100;
+                real_temperature[0] = temporary_val;
+                temporary_val = (real_temp-temporary_val*100)/10;
+                real_temperature[1] = temporary_val;
+                temporary_val = real_temp-(real_temp/100)*100-temporary_val*10;
+                real_temperature[2] = temporary_val;
+                OLED_WriteNumber(real_temperature,3,6,88);
+            }else if(R == 0){
+                OLED_WriteString(detached_str,3,6,88);
+            }else{
+                OLED_WriteString(loading_str,3,6,88);
+            }
+            measure_flag = 0;
+        }
+        
+        //Calculate Pulse
+        if(set_temp > real_temp && (set_temp - real_temp) > 20)
+            pulse_width = 40;
+        else if(set_temp > real_temp)
+            pulse_width = (((set_temp - real_temp)*25)/20)+5;
+        else
+            pulse_width = 4; 
+        
+        //READY LED
+        if(set_temp > real_temp && (set_temp-real_temp) < 10)
+            LED_READY = 1;
+        else if(set_temp < real_temp && (real_temp-set_temp) < 10)
+            LED_READY = 1;
+        else if(set_temp == real_temp)
+            LED_READY = 1;
+        else
+            LED_READY = 0;
         CLRWDT(); //Clear Watchdog timer
     }
 }
@@ -220,6 +378,25 @@ void timer0_init(void){
     PIR3bits.TMR0IF = 0; //Clear interrupt flag
     PIE3bits.TMR0IE = 1; //Enable interrupt
     T0CON0bits.EN = 1;
+}
+//--------------------------------PWM-------------------------------------------
+
+//Period:0.001sec
+//Interupt:0.0001sec
+void timer2PWM_init(void){
+    TRISCbits.TRISC6 = 0; //MOSFET1 -> PWM5
+    TRISCbits.TRISC7 = 0; //MOSFET2 -> PWM6
+    ANSELCbits.ANSELC6 = 0;
+    ANSELCbits.ANSELC7 = 0;
+    
+    T2CON= 0x60; //Prescale:64,Postscale:1
+    T2PR = 25;
+    T2CLK = 0x01; //CLK = Fosc/4 = 16MHz
+    T2HLT = 0x00;
+    IPR4bits.TMR2IP = 1; //High priority interrupt
+    PIR4bits.TMR2IF = 0; //Clear interrupt flag
+    PIE4bits.TMR2IE = 1; //Enable interrupt
+    T2CONbits.ON = 1;
 }
 
 //------------------------------------------------------------------------------
@@ -251,6 +428,7 @@ void external_interrupt_init(void){
     PIE7bits.INT2IE = 1; //Enable interrupt
 }
 
+//------------------------------------------------------------------------------
 void write_eeprom(byte data,byte address[2]){
     
     NVMCON1 = 0x00; //Access EEPROM memory locations,set REG bits to 00
@@ -285,4 +463,27 @@ byte read_eeprom(byte address[2]){
     NVMCON1bits.RD = 1; //Read data
     temp = NVMDAT;
     return temp;
+}
+
+//------------------------ADC Functions-----------------------------------------
+
+void ADC_Init(void){
+    //Voltage measure
+    ADCON0 = 0x94;
+    ADCON1 = 0x00;
+    ADCON2 = 0x00;
+    ADREF = 0x00; //VDD,VSS as references
+    IPR1bits.ADIP = 0; //Low priority
+    PIE1bits.ADIE = 1; //Enable interrupt
+    PIR1bits.ADIF = 0; //Clear interrupt flag
+}
+
+//0-7 =RA0-RA7,8-15=RB0-RB7,16-23=RC0-RC7
+void ADC_Start(byte pin){
+    if(!ADCON0bits.GO){
+        ADPCH = pin;
+        adc_result = 0;
+        adc_flag = 0;
+        ADCON0bits.GO = 1;
+    }
 }

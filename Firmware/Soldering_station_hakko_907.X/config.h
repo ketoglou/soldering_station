@@ -3,6 +3,7 @@
 
 // 'C' source line config statements
 #ifndef CONFIG_H
+#define CONFIG_H
 
 // CONFIG1L
 #pragma config FEXTOSC = HS     // External Oscillator Selection (HS (crystal oscillator) above 8 MHz; PFM set to high power)

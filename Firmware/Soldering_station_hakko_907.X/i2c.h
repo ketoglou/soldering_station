@@ -1,4 +1,8 @@
 #ifndef I2C_H
+#define I2C_H
+
+#define I2C_Enable() (I2C1CON0bits.EN = 1)
+#define I2C_Disable() (I2C1CON0bits.EN = 0)
 
 #define byte unsigned char
 #define I2C_TX_BUFFER_SIZE 10

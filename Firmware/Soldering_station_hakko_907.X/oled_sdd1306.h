@@ -1,4 +1,5 @@
 #ifndef OLED_SDD1306_H
+#define OLED_SDD1306_H
 
 #include "i2c.h"
 
@@ -9,7 +10,7 @@ typedef enum {
 
 //This enum used to print characters
 typedef enum {
-    A=0,B=1,GAMMA=2,DELTA=3,E=4,Z=5,H=6,THETA=7,I=8,K=9,LAMDA=10,M=11,N=12,KSI=13,O=14,PI=15,P=16,SIGMA=17,T=18,Y=19,FI=20,X=21,PSI=22,OMEGA=23,SPACE=24,COLON=25,CELSIOUS=26,DEGREE=27
+    A=0,B=1,GAMMA=2,DELTA=3,E=4,Z=5,H=6,THETA=7,I=8,K=9,LAMDA=10,M=11,N=12,KSI=13,O=14,PI=15,P=16,SIGMA=17,T=18,Y=19,FI=20,X=21,PSI=22,OMEGA=23,SPACE=24,COLON=25,CELSIOUS=26,DEGREE=27,PAVLA = 28
 }CHAR;
 
 //OLED ADDRESS
@@ -63,7 +64,7 @@ void OLED_WriteString(CHAR *st,int st_size,byte line,byte pos);
 void OLED_WriteNumber(byte *st,int st_size,byte line,byte pos);
 
 //GREEK characters Array
-byte chars[28][8] = {
+byte chars[29][8] = {
                     {0x00, 0x7f, 0x09, 0x09, 0x09, 0x09, 0x7f, 0x00}, //A
                     {0x00, 0x7f, 0x49, 0x49, 0x49, 0x55, 0x63, 0x00}, //B
                     {0x00, 0x7f, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00}, //GAMMA
@@ -91,7 +92,8 @@ byte chars[28][8] = {
                     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, //SPACE
                     {0x00, 0x00, 0x00, 0x66, 0x66, 0x00, 0x00, 0x00}, //COLON
                     {0x00, 0x7f, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00}, //CELSIOUS SYMBOL C
-                    {0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x07, 0x00} //DEGREE SYMBOL FOR CELSIOUS
+                    {0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x07, 0x00}, //DEGREE SYMBOL FOR CELSIOUS
+                    {0x00, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00} //PAVLA
                    };
 
 byte numbers[10][8] = {
