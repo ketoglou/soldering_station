@@ -7,3 +7,6 @@ it is the following : Temperature = 5.95 * Resistance - 281.3.
 
 - PCB.zip : Contains gerber files for PCB.
 - Firmware : Contains PIC18F27K42 firmware.
+
+The following image shows the PCB.\
+<img src="pcb.png" width="30%"> \
