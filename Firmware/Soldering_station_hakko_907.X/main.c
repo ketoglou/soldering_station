@@ -54,7 +54,6 @@ int adc_result;
 byte adc_flag;
 //byte max6675_counter = 0;
 CHAR detached_str[3] = {PAVLA,PAVLA,PAVLA};
-CHAR loading_str[3] = {COLON,COLON,COLON};
 
 //------------------------------------------------------------------------------
 void __interrupt(irq(IRQ_TMR0)) TIMER0_ISR(void){
@@ -326,8 +325,8 @@ void main(void) {
                 R = Vx_average/Current;
             }else
                 R = 0;
-            if(R > 48){
-                Temp = 5.95*R - 281.3;
+            if(R > 48 && R < 200){
+                Temp = 5.95*R - 281.3; //Based in least squares
                 real_temp = (int)Temp;
                 temporary_val = real_temp/100;
                 real_temperature[0] = temporary_val;
@@ -336,10 +335,8 @@ void main(void) {
                 temporary_val = real_temp-(real_temp/100)*100-temporary_val*10;
                 real_temperature[2] = temporary_val;
                 OLED_WriteNumber(real_temperature,3,6,88);
-            }else if(R == 0){
-                OLED_WriteString(detached_str,3,6,88);
             }else{
-                OLED_WriteString(loading_str,3,6,88);
+                OLED_WriteString(detached_str,3,6,88);
             }
             measure_flag = 0;
         }
